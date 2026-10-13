@@ -258,9 +258,14 @@ bool AzRgforest::growForest()
   /*---  split the node  ---*/
   double w_inc; // weight will be incremented.
   int leaf_nx[2] = {-1, -1};
-  const AzRgfTree *tree = splitNode(&best_split, &w_inc, leaf_nx); 
+  const AzRgfTree *tree = splitNode(&best_split, &w_inc, leaf_nx);
 
-  if (lmax_timer.reachedMax(l_num, "AzRgforest: #leaf", out)) { 
+  /*---  targets of the split rows change; other trees' leaves contain them  ---*/
+  for (int tx = 0; tx < ens->size(); ++tx) {
+    if (ens->tree_u(tx) != tree) ens->tree_u(tx)->invalidateSplitCache();
+  }
+
+  if (lmax_timer.reachedMax(l_num, "AzRgforest: #leaf", out)) {
     return true; /* #leaf reached max; exit */
   }
 

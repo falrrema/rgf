@@ -74,6 +74,12 @@ void AzRgf_FindSplit_Dflt::resetParam(AzParam &p)
     throw new AzException(AzInputNotValid, "AzRgf_FindSplit_Dflt",
                           "split_threads", "must be positive");
   feature_workers.reset();
+  int split_cache_switch = 1;
+  p.vInt("split_cache=", &split_cache_switch);
+  if (split_cache_switch != 0 && split_cache_switch != 1)
+    throw new AzException(AzInputNotValid, "AzRgf_FindSplit_Dflt",
+                          "split_cache", "must be 0 or 1");
+  split_cache_enabled = (split_cache_switch == 1);
   /*---  reg param shared with optimizer  ---*/
   p.vFloat(kw_lambda, &lambda); 
   p.vFloat(kw_sigma, &sigma); 
@@ -103,7 +109,8 @@ void AzRgf_FindSplit_Dflt::printParam(const AzOut &out) const
   o.ppBegin("AzRgf_FindSplit_Dflt", "Node split", ", "); 
   o.printV(kw_lambda, lambda); 
   o.printV("split_threads=", split_threads);
-  o.printV_posiOnly(kw_sigma, sigma); 
+  if (!split_cache_enabled) o.printV("split_cache=", 0);
+  o.printV_posiOnly(kw_sigma, sigma);
   o.ppEnd(); 
 }
 
@@ -113,6 +120,7 @@ void AzRgf_FindSplit_Dflt::printHelp(AzHelp &h) const
   h.begin(Azsplit_config, "AzRgf_FindSplit_Dflt", "Regularization at node split"); 
   h.item_required(kw_lambda, help_lambda);  
   h.item("split_threads=", "Number of workers for deterministic feature split search.");
+  h.item("split_cache=", "1: re-evaluate unchanged leaves from recorded split sums (same model).  0: rescan them.", "1");
   h.item_experimental(kw_sigma, help_sigma, sigma_dflt); 
   h.item(kw_s_lambda, help_s_lambda);  
   h.item_experimental(kw_s_sigma, help_s_sigma); 

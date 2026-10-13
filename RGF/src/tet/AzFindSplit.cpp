@@ -28,10 +28,15 @@ void AzFindSplit::_findBestSplit(int nx,
   const char *eyec = "AzFindSplit::_findBestSplit"; 
 
   if (tree == NULL || target == NULL || data == NULL) {
-    throw new AzException(eyec, "information is not set"); 
+    throw new AzException(eyec, "information is not set");
   }
 
-  const int *dxs = tree->node(nx)->data_indexes(); 
+  if (replay_split_cache) {
+    replayBestSplit(best_split);
+    return;
+  }
+
+  const int *dxs = tree->node(nx)->data_indexes();
   const int dxs_num = tree->node(nx)->dxs_num; 
 
   const int worker_count = std::min(split_threads, data->featNum());
@@ -59,9 +64,14 @@ void AzFindSplit::_findBestSplit(int nx,
   // Small nodes stay serial to avoid dispatch overhead; no arithmetic changes.
   std::unique_ptr<AzTrTsplit[]> candidates;
   if (parallel) candidates.reset(new AzTrTsplit[worker_count]);
+  // Each worker records its own feature range; concatenating the records in
+  // worker order reproduces the serial evaluation order exactly.
+  const int record_limit = splitCacheLimit();
+  std::vector<std::vector<AzSplitCandidate> > records(split_cache != NULL ? (parallel ? worker_count : 1) : 0);
   const auto search = [&](int worker) {
     AzTrTsplit *candidate = parallel ? &candidates[worker] : best_split;
     if (parallel) candidate->copy(best_split);
+    std::vector<AzSplitCandidate> *record = records.empty() ? NULL : &records[worker];
     const int begin = parallel ? static_cast<long long>(feat_num)*worker/worker_count : 0;
     const int end = parallel ? static_cast<long long>(feat_num)*(worker+1)/worker_count : feat_num;
     for (int ix = begin; ix < end; ++ix) {
@@ -75,10 +85,10 @@ void AzFindSplit::_findBestSplit(int nx,
         if (my_sorted->dataNum() != dxs_num) {
           throw new AzException(eyec, "conflict in #data");
         }
-        loop(candidate, fx, my_sorted, dxs_num, &total);
+        loop(candidate, fx, my_sorted, dxs_num, &total, record, record_limit);
       }
       else {
-        loop(candidate, fx, sorted, dxs_num, &total);
+        loop(candidate, fx, sorted, dxs_num, &total, record, record_limit);
       }
     }
   };
@@ -91,6 +101,24 @@ void AzFindSplit::_findBestSplit(int nx,
         best_split->copy(&candidates[worker]);
   }
   else search(0);
+
+  if (split_cache != NULL) {
+    size_t count = 0;
+    bool complete = true;
+    for (size_t wx = 0; wx < records.size(); ++wx) {
+      count += records[wx].size();
+      if (records[wx].size() > (size_t)record_limit) complete = false;
+    }
+    split_cache->clear();
+    if (complete && count <= (size_t)record_limit) {
+      split_cache->candidates.reserve(count);
+      for (size_t wx = 0; wx < records.size(); ++wx) {
+        split_cache->candidates.insert(split_cache->candidates.end(),
+                                       records[wx].begin(), records[wx].end());
+      }
+      split_cache->valid = true;
+    }
+  }
 
   if (best_split->fx >= 0) {
     if (!dmp_out.isNull()) {
@@ -109,11 +137,13 @@ double AzFindSplit::evalSplit(const Az_forFindSplit i[2],
 }
 
 /*--------------------------------------------------------*/
-void AzFindSplit::loop(AzTrTsplit *best_split, 
+void AzFindSplit::loop(AzTrTsplit *best_split,
                        int fx, /* feature# */
-                       const AzSortedFeat *sorted, 
-                       int total_size, 
-                       const Az_forFindSplit *total)
+                       const AzSortedFeat *sorted,
+                       int total_size,
+                       const Az_forFindSplit *total,
+                       std::vector<AzSplitCandidate> *record, /* may be NULL */
+                       int record_limit)
 {
   /*---  first everyone is in GT(LE)  ---*/
   /*---  move the smallest(largest) ones from GT(LE) to LE(GT)  ---*/
@@ -167,14 +197,43 @@ void AzFindSplit::loop(AzTrTsplit *best_split,
       }
     }
 
-    src->wy_sum = total->wy_sum - dest->wy_sum; 
-    src->w_sum  = total->w_sum  - dest->w_sum; 
+    src->wy_sum = total->wy_sum - dest->wy_sum;
+    src->w_sum  = total->w_sum  - dest->w_sum;
+
+    /* one record past the limit marks the cache as incomplete */
+    if (record != NULL && (int)record->size() <= record_limit) {
+      AzSplitCandidate c;
+      c.i[0] = i[0]; c.i[1] = i[1];
+      c.value = value; c.fx = fx; c.forward = (le_idx == 0);
+      record->push_back(c);
+    }
 
     double bestP[2] = {0, 0};
     const double gain = evalSplit(i, bestP);
     if (gain > best_split->gain) {
       best_split->reset_values(fx, value, gain,
                                bestP[le_idx], bestP[gt_idx]);
+    }
+  }
+}
+
+/*--------------------------------------------------------*/
+/* Same evalSplit calls, in the same order, on the same recorded sums. */
+void AzFindSplit::replayBestSplit(AzTrTsplit *best_split) const
+{
+  const std::vector<AzSplitCandidate> &list = split_cache->candidates;
+  for (size_t cx = 0; cx < list.size(); ++cx) {
+    const AzSplitCandidate &c = list[cx];
+    double bestP[2] = {0, 0};
+    const double gain = evalSplit(c.i, bestP);
+    if (gain > best_split->gain) {
+      best_split->reset_values(c.fx, c.value, gain,
+                               bestP[c.forward ? 0 : 1], bestP[c.forward ? 1 : 0]);
+    }
+  }
+  if (best_split->fx >= 0) {
+    if (!dmp_out.isNull()) {
+      data->featInfo()->desc(best_split->fx, &best_split->str_desc);
     }
   }
 }

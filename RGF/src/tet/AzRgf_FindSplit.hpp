@@ -17,6 +17,7 @@
 #include "AzParam.hpp"
 #include "AzFsinfo.hpp"
 #include "AzHelp.hpp"
+#include "AzSplitCache.hpp"
 
 class AzRgf_FindSplit_input {
 public:
@@ -65,10 +66,12 @@ public:
   virtual void pickFeats(int f_num, int data_num) = 0; 
 
   virtual void end() = 0; 
-  virtual 
-  void findSplit(int nx, //!< node id 
+  virtual
+  void findSplit(int nx, //!< node id
                  /*---  output  ---*/
-                 AzTrTsplit *best_split) = 0; 
+                 AzTrTsplit *best_split) = 0;
+  /*! Cache for the next findSplit: record into it, or replay it when it is valid. */
+  virtual void useSplitCache(AzSplitCache *cache, bool replay) {}
 
   virtual void printParam(const AzOut &out) const = 0;  
   virtual void printHelp(AzHelp &h) const = 0; 

@@ -53,7 +53,7 @@ void AzRgfTree::findSplit(AzRgf_FindSplit *fs,
 }
 
 /*--------------------------------------------------------*/
-void AzRgfTree::removeSplitAssessment() 
+void AzRgfTree::removeSplitAssessment()
 {
   if (split != NULL) {
     for (int nx = 0; nx < nodes_used; ++nx) {
@@ -61,6 +61,7 @@ void AzRgfTree::removeSplitAssessment()
       split[nx] = NULL;
     }
   }
+  invalidateSplitCache(); /* weights and targets changed */
 }
 
 /*--------------------------------------------------------*/

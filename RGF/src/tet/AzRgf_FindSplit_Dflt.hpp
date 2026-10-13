@@ -66,7 +66,10 @@ public:
   }
 
   virtual void pickFeats(int pick_num, int f_num) {
-    AzFindSplit::_pickFeats(pick_num, f_num); 
+    AzFindSplit::_pickFeats(pick_num, f_num);
+  }
+  virtual void useSplitCache(AzSplitCache *cache, bool replay) {
+    AzFindSplit::useSplitCacheFor(cache, replay);
   }
 
   virtual void printParam(const AzOut &out) const; 

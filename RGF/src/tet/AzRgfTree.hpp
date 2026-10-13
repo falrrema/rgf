@@ -53,9 +53,11 @@ protected:
   AzOut out, my_dmp_out; 
   bool beVerbose; 
 
-  AzRgfTreeTemp wk; 
+  AzRgfTreeTemp wk;
+  /* recorded split sums per node; valid while the node's rows keep their targets */
+  mutable std::vector<AzSplitCache> split_caches;
 
-  const static int min_size_dflt = 10; 
+  const static int min_size_dflt = 10;
 
 public:
   AzRgfTree() 
@@ -73,8 +75,9 @@ public:
     out = out_req; 
   }
   virtual void reset(AzParam &param) {
-    AzTrTree::_release(); 
-    resetParam(param); 
+    AzTrTree::_release();
+    invalidateSplitCache();
+    resetParam(param);
   }
 
   /*---  to store data indexes to disk  ---*/
@@ -100,18 +103,25 @@ public:
 
   inline virtual int makeRoot(const AzDataForTrTree *dfd, 
                       const AzIntArr *ia_tr_dx=NULL) {
-    AzTrTree::_genRoot(max_leaf_num, dfd, ia_tr_dx); 
-    return root_nx; 
+    AzTrTree::_genRoot(max_leaf_num, dfd, ia_tr_dx);
+    invalidateSplitCache();
+    return root_nx;
   }
 
-  inline virtual void splitNode(const AzDataForTrTree *data, 
+  inline virtual void splitNode(const AzDataForTrTree *data,
                                 const AzTrTsplit *split) {
-    AzTrTree::_splitNode(data, max_leaf_num, 
-                         doUseInternalNodes, 
-                         split->nx, split, my_dmp_out); 
+    const int nx = split->nx;
+    AzTrTree::_splitNode(data, max_leaf_num,
+                         doUseInternalNodes,
+                         nx, split, my_dmp_out);
+    if (nx >= 0 && nx < (int)split_caches.size()) split_caches[nx].clear();
   }
 
-  virtual void removeSplitAssessment(); 
+  virtual void removeSplitAssessment();
+  /*! Call whenever targets of this tree's rows may have changed outside its own splits. */
+  void invalidateSplitCache() const {
+    std::vector<AzSplitCache>().swap(split_caches);
+  }
 
   /*---  weight updating ...  ---*/
   // Set all nodes weight to zero.
@@ -140,7 +150,8 @@ public:
     doUseInternalNodes = inp->usingInternalNodes(); 
   }
   virtual inline void releaseWork() {
-    AzTrTree::_releaseWork(); 
+    AzTrTree::_releaseWork();
+    invalidateSplitCache();
     storeDataIndexes(); 
   }
 
@@ -161,12 +172,20 @@ protected:
 
   virtual inline void _findSplit(AzRgf_FindSplit *fs, 
                                  int nx, bool doRefreshAll) const {
-    if (doRefreshAll || 
-        split[nx] == NULL || 
+    if (doRefreshAll ||
+        split[nx] == NULL ||
         nx == root_nx) {
-      if (split[nx] == NULL) split[nx] = new AzTrTsplit(); 
+      if (split[nx] == NULL) split[nx] = new AzTrTsplit();
       else                   split[nx]->reset();
-      fs->findSplit(nx, split[nx]); 
+      /*---  a forced refresh of an unchanged leaf only needs new penalty terms  ---*/
+      AzSplitCache *cache = NULL;
+      if (doRefreshAll && nx != root_nx) {
+        if ((int)split_caches.size() < nodes_used) split_caches.resize(nodes_used);
+        cache = &split_caches[nx];
+      }
+      fs->useSplitCache(cache, true);
+      fs->findSplit(nx, split[nx]);
+      fs->useSplitCache(NULL, false);
     }
   }
   virtual inline void _findSplit_end(AzRgf_FindSplit *fs) const {

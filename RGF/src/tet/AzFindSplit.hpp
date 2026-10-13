@@ -15,16 +15,8 @@
 #include "AzTrTsplit.hpp"
 #include "AzTrTree.hpp"
 #include "AzFeatureWorkers.hpp"
+#include "AzSplitCache.hpp"
 #include <memory>
-
-class Az_forFindSplit {
-public:
-  double wy_sum, w_sum; 
-  Az_forFindSplit() : wy_sum(0), w_sum(0) {}
-  void reset() {
-    wy_sum = w_sum = 0; 
-  }
-};
 
 //! Abstract class: provides building blocks for node split search. 
 /*------------------------------------------*/
@@ -34,16 +26,20 @@ protected:
   const AzTrTtarget *target; 
   const AzDataForTrTree *data; 
   const AzTrTree_ReadOnly *tree; 
-  int min_size; 
+  int min_size;
   int split_threads;
   std::unique_ptr<AzFeatureWorkers> feature_workers;
+  bool split_cache_enabled;
+  AzSplitCache *split_cache; /* record into it, or replay it when replay_split_cache */
+  bool replay_split_cache;
 
-  AzIntArr ia_feats; 
-  const AzIntArr *ia_fx; 
+  AzIntArr ia_feats;
+  const AzIntArr *ia_fx;
 
 public:
-  AzFindSplit() : target(NULL), data(NULL), tree(NULL), ia_fx(NULL), 
-                  min_size(-1), split_threads(1) {}
+  AzFindSplit() : target(NULL), data(NULL), tree(NULL), ia_fx(NULL),
+                  min_size(-1), split_threads(1), split_cache_enabled(true),
+                  split_cache(NULL), replay_split_cache(false) {}
   virtual ~AzFindSplit() {}
   void reset() {
     target = NULL;
@@ -67,7 +63,17 @@ public:
   //                 AzTrTsplit *best_split); /* output */
   //----------------------------------------------------------------
 
-  virtual void _pickFeats(int pick_num, int f_num); 
+  virtual void _pickFeats(int pick_num, int f_num);
+
+  /*
+   * Use a per-leaf candidate cache for the next search.  A random feature
+   * subset changes the candidates between searches, so it disables the cache.
+   */
+  void useSplitCacheFor(AzSplitCache *cache, bool replay) {
+    if (!split_cache_enabled || ia_fx != NULL) cache = NULL;
+    split_cache = cache;
+    replay_split_cache = (cache != NULL && replay && cache->valid);
+  }
 
 protected: 
   /*----------------------------------------------------------------*/
@@ -82,11 +88,17 @@ protected:
   void _findBestSplit(int nx, 
                       /*---  output  ---*/
                       AzTrTsplit *best_split); 
-  void loop(AzTrTsplit *best_split, 
+  void loop(AzTrTsplit *best_split,
             int fx, /* feature# */
-            const AzSortedFeat *sorted, 
-            int dxs_num, 
-            const Az_forFindSplit *total); 
-}; 
+            const AzSortedFeat *sorted,
+            int dxs_num,
+            const Az_forFindSplit *total,
+            std::vector<AzSplitCandidate> *record, /* may be NULL */
+            int record_limit);
+  void replayBestSplit(AzTrTsplit *best_split) const;
+  int splitCacheLimit() const {
+    return MAX(4096, 16*data->featNum());
+  }
+};
 
 #endif 
