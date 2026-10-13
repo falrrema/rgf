@@ -14,6 +14,8 @@
 #include "AzTrTtarget.hpp"
 #include "AzTrTsplit.hpp"
 #include "AzTrTree.hpp"
+#include "AzFeatureWorkers.hpp"
+#include <memory>
 
 class Az_forFindSplit {
 public:
@@ -33,14 +35,16 @@ protected:
   const AzDataForTrTree *data; 
   const AzTrTree_ReadOnly *tree; 
   int min_size; 
+  int split_threads;
+  std::unique_ptr<AzFeatureWorkers> feature_workers;
 
   AzIntArr ia_feats; 
   const AzIntArr *ia_fx; 
 
 public:
   AzFindSplit() : target(NULL), data(NULL), tree(NULL), ia_fx(NULL), 
-                  min_size(-1) {}
-  ~AzFindSplit() {}
+                  min_size(-1), split_threads(1) {}
+  virtual ~AzFindSplit() {}
   void reset() {
     target = NULL;
     data = NULL; 

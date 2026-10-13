@@ -743,7 +743,7 @@ double AzTrTree::init_constw(AzLossType loss_type,
 
 /*------------------------------------------------------------------*/
 const AzSortedFeatArr *AzTrTree::sorted_array(int nx, 
-                             const AzDataForTrTree *data) const
+                             const AzDataForTrTree *data, AzFeatureWorkers *workers) const
 {
   const char *eyec = "AzTrTree::sorted_array"; 
   if (isBagging) {
@@ -783,7 +783,7 @@ const AzSortedFeatArr *AzTrTree::sorted_array(int nx,
 
   if (sorted_arr[root_nx] == NULL) {
     /*---  we need this as the base for SortedFeat_Dense  ---*/
-    sorted_arr[root_nx] = new AzSortedFeatArr(data->sorted_array());     
+    sorted_arr[root_nx] = new AzSortedFeatArr(data->sorted_array(), workers);
   }
   int px = nodes[nx].parent_nx; 
   if (px < 0) {
@@ -808,7 +808,7 @@ const AzSortedFeatArr *AzTrTree::sorted_array(int nx,
   AzSortedFeatArr::separate(base, inp, 
                             nodes[le_nx].dxs, nodes[le_nx].dxs_num, 
                             nodes[gt_nx].dxs, nodes[gt_nx].dxs_num, 
-                            sorted_arr[le_nx], sorted_arr[gt_nx]); 
+                            sorted_arr[le_nx], sorted_arr[gt_nx], workers);
   if (px != root_nx) { /* can't delete the one at the root as it's the base */
     delete sorted_arr[px];
     sorted_arr[px] = NULL;

@@ -68,6 +68,12 @@ double AzRgf_FindSplit_Dflt::getBestGain(double wsum,  /* some of data weights *
 /*--------------------------------------------------------*/
 void AzRgf_FindSplit_Dflt::resetParam(AzParam &p)
 {
+  split_threads = 1;
+  p.vInt("split_threads=", &split_threads);
+  if (split_threads < 1)
+    throw new AzException(AzInputNotValid, "AzRgf_FindSplit_Dflt",
+                          "split_threads", "must be positive");
+  feature_workers.reset();
   /*---  reg param shared with optimizer  ---*/
   p.vFloat(kw_lambda, &lambda); 
   p.vFloat(kw_sigma, &sigma); 
@@ -96,6 +102,7 @@ void AzRgf_FindSplit_Dflt::printParam(const AzOut &out) const
   o.set_precision(5); 
   o.ppBegin("AzRgf_FindSplit_Dflt", "Node split", ", "); 
   o.printV(kw_lambda, lambda); 
+  o.printV("split_threads=", split_threads);
   o.printV_posiOnly(kw_sigma, sigma); 
   o.ppEnd(); 
 }
@@ -105,6 +112,7 @@ void AzRgf_FindSplit_Dflt::printHelp(AzHelp &h) const
 {
   h.begin(Azsplit_config, "AzRgf_FindSplit_Dflt", "Regularization at node split"); 
   h.item_required(kw_lambda, help_lambda);  
+  h.item("split_threads=", "Number of workers for deterministic feature split search.");
   h.item_experimental(kw_sigma, help_sigma, sigma_dflt); 
   h.item(kw_s_lambda, help_s_lambda);  
   h.item_experimental(kw_s_sigma, help_s_sigma); 

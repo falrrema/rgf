@@ -725,7 +725,7 @@ void AzSortedFeatArr::reset_dense(const AzDmat *m_tran_dense,   /* set */
 }
 
 /*--------------------------------------------------------*/
-void AzSortedFeatArr::copy_base(const AzSortedFeatArr *inp)
+void AzSortedFeatArr::copy_base(const AzSortedFeatArr *inp, AzFeatureWorkers *workers)
 {
   const char *eyec = "AzSortedFeatArr::copy_base"; 
   beTight = inp->beTight; 
@@ -740,26 +740,28 @@ void AzSortedFeatArr::copy_base(const AzSortedFeatArr *inp)
     return; 
   }
 
-  if (inp->doingSparse()) {
-    a_sparse.alloc(&arrs, f_num, eyec, "arrs"); 
-    int fx; 
-    for (fx = 0; fx < f_num; ++fx) {
-      if (inp->arrs == NULL || inp->arrs[fx] == NULL) {
-        throw new AzException(eyec, "No sorted sparse features?!");
+  const bool sparse = inp->doingSparse();
+  if (sparse) a_sparse.alloc(&arrs, f_num, eyec, "arrs");
+  else a_dense.alloc(&arrd, f_num, eyec, "arrd");
+  const int count = workers ? workers->size() : 1;
+  const auto copy = [&](int worker) {
+    const int begin = static_cast<long long>(f_num)*worker/count;
+    const int end = static_cast<long long>(f_num)*(worker+1)/count;
+    for (int fx = begin; fx < end; ++fx) {
+      if (sparse) {
+        if (inp->arrs == NULL || inp->arrs[fx] == NULL)
+          throw new AzException(eyec, "No sorted sparse features?!");
+        arrs[fx] = new AzSortedFeat_Sparse(inp->arrs[fx]);
       }
-      arrs[fx] = new AzSortedFeat_Sparse(inp->arrs[fx]); 
-    }
-  }
-  else {
-    a_dense.alloc(&arrd, f_num, eyec, "arrd"); 
-    int fx; 
-    for (fx = 0; fx < f_num; ++fx) {
-      if (inp->arrd == NULL || inp->arrd[fx] == NULL) {
-        throw new AzException(eyec, "No sorted dense features?!");
+      else {
+        if (inp->arrd == NULL || inp->arrd[fx] == NULL)
+          throw new AzException(eyec, "No sorted dense features?!");
+        arrd[fx] = new AzSortedFeat_Dense(inp->arrd[fx]);
       }
-      arrd[fx] = new AzSortedFeat_Dense(inp->arrd[fx]); 
     }
-  }
+  };
+  if (workers) workers->run(copy);
+  else copy(0);
 }
 
 /*--------------------------------------------------------*/
@@ -822,7 +824,7 @@ void AzSortedFeatArr::separate(AzSortedFeatArr *base, /* used only by Dense */
              const AzSortedFeatArr *inp, 
              const int *yes_dxs, int yes_dxs_num, 
              const int *no_dxs, int no_dxs_num, 
-             AzSortedFeatArr *yes, AzSortedFeatArr *no) 
+             AzSortedFeatArr *yes, AzSortedFeatArr *no, AzFeatureWorkers *workers)
 {
   const char *eyec = "AzSortedFeatArr::separate"; 
   sub_initialize(inp, yes); 
@@ -840,41 +842,48 @@ void AzSortedFeatArr::separate(AzSortedFeatArr *base, /* used only by Dense */
     return; 
   }
 
-  if (inp->doingSparse()) {
-    for (int fx = 0; fx < inp->featNum(); ++fx) {
-      if (inp->arrs == NULL || inp->arrs[fx] == NULL) {
-        throw new AzException(eyec, "No sparse sorted featuers given as input"); 
-      }
-      yes->arrs[fx] = new AzSortedFeat_Sparse(); 
-      no->arrs[fx] = new AzSortedFeat_Sparse(); 
-      AzSortedFeat_Sparse::separate(inp->arrs[fx], &ia_isActive, active_num,  
-                             yes->arrs[fx], no->arrs[fx]); 
-      if (yes->arrs[fx]->dataNum() != yes_dxs_num || 
-          no->arrs[fx]->dataNum() != no_dxs_num) {
-        throw new AzException(eyec, "conflict in pop (sparse)"); 
-      }
-    }
-  }
-  else {
-    if (base == NULL) {
-      throw new AzException(eyec, "base is null.  something is wrong"); 
-    }
-    for (int fx = 0; fx < inp->featNum(); ++fx) {
-      if (base->arrd == NULL || base->arrd[fx] == NULL) {
-        throw new AzException(eyec, "No dense sorted featuers given as base"); 
-      }
-      if (inp->arrd == NULL || inp->arrd[fx] == NULL) {
-        throw new AzException(eyec, "No dense sorted featuers given as input"); 
-      }
-      yes->arrd[fx] = new AzSortedFeat_Dense(); 
-      no->arrd[fx] = new AzSortedFeat_Dense(); 
-      AzSortedFeat_Dense::separate(base->arrd[fx], 
-                               inp->arrd[fx], &ia_isActive, active_num,  
-                               yes->arrd[fx], no->arrd[fx]); 
-      if (yes->arrd[fx]->dataNum() != yes_dxs_num || 
-          no->arrd[fx]->dataNum() != no_dxs_num) {
-        throw new AzException(eyec, "conflict in pop (dense)"); 
+  const int count = workers ? workers->size() : 1;
+  const auto partition = [&](int worker) {
+    const int begin = static_cast<long long>(inp->featNum())*worker/count;
+    const int end = static_cast<long long>(inp->featNum())*(worker+1)/count;
+    if (inp->doingSparse()) {
+      for (int fx = begin; fx < end; ++fx) {
+        if (inp->arrs == NULL || inp->arrs[fx] == NULL) {
+          throw new AzException(eyec, "No sparse sorted featuers given as input");
+        }
+        yes->arrs[fx] = new AzSortedFeat_Sparse();
+        no->arrs[fx] = new AzSortedFeat_Sparse();
+        AzSortedFeat_Sparse::separate(inp->arrs[fx], &ia_isActive, active_num,
+                               yes->arrs[fx], no->arrs[fx]);
+        if (yes->arrs[fx]->dataNum() != yes_dxs_num ||
+            no->arrs[fx]->dataNum() != no_dxs_num) {
+          throw new AzException(eyec, "conflict in pop (sparse)");
+        }
       }
     }
-  }
+    else {
+      if (base == NULL) {
+        throw new AzException(eyec, "base is null.  something is wrong");
+      }
+      for (int fx = begin; fx < end; ++fx) {
+        if (base->arrd == NULL || base->arrd[fx] == NULL) {
+          throw new AzException(eyec, "No dense sorted featuers given as base");
+        }
+        if (inp->arrd == NULL || inp->arrd[fx] == NULL) {
+          throw new AzException(eyec, "No dense sorted featuers given as input");
+        }
+        yes->arrd[fx] = new AzSortedFeat_Dense();
+        no->arrd[fx] = new AzSortedFeat_Dense();
+        AzSortedFeat_Dense::separate(base->arrd[fx],
+                                 inp->arrd[fx], &ia_isActive, active_num,
+                                 yes->arrd[fx], no->arrd[fx]);
+        if (yes->arrd[fx]->dataNum() != yes_dxs_num ||
+            no->arrd[fx]->dataNum() != no_dxs_num) {
+          throw new AzException(eyec, "conflict in pop (dense)");
+        }
+      }
+    }
+  };
+  if (workers) workers->run(partition);
+  else partition(0);
 }

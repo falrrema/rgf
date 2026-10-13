@@ -38,7 +38,7 @@ public:
   virtual bool usingInternalNodes() const = 0; 
 
   virtual const AzSortedFeatArr *sorted_array(int nx, 
-                             const AzDataForTrTree *data) const = 0; 
+                             const AzDataForTrTree *data, AzFeatureWorkers *workers = NULL) const = 0;
                              /*--- (NOTE) this is const but changes sorted_arr[nx] ---*/
 
   virtual const AzIntArr *root_dx() const = 0; 

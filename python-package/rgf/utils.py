@@ -28,6 +28,7 @@ NOT_FITTED_ERROR_DESC = "Estimator not fitted, call `fit` before exploiting the 
 NOT_IMPLEMENTED_ERROR_DESC = "This method isn't implemented in base class."
 SYSTEM = platform.system()
 UUIDS = []
+TEMP_PATHS = {}
 
 
 @atexit.register
@@ -39,12 +40,16 @@ def cleanup():
 def cleanup_partial(uuid, remove_from_list=False):
     n_removed_files = 0
     if uuid in UUIDS:
-        model_glob = os.path.join(Config().TEMP_PATH, uuid + "*")
+        directory = TEMP_PATHS.get(uuid)
+        if directory is None:
+            directory = Config().TEMP_PATH
+        model_glob = glob.escape(os.path.join(directory, uuid)) + "*"
         for fn in glob.glob(model_glob):
             os.remove(fn)
             n_removed_files += 1
         if remove_from_list:
             UUIDS.remove(uuid)
+            TEMP_PATHS.pop(uuid, None)
     return n_removed_files
 
 
@@ -283,6 +288,7 @@ class CommonRGFExecuterBase(BaseEstimator):
         self._fitted = False
 
     def _set_paths(self):
+        TEMP_PATHS[self._file_prefix] = self.config.TEMP_PATH
         self._train_x_loc = os.path.join(self.config.TEMP_PATH, self._file_prefix + ".train.data.x")
         self._test_x_loc = os.path.join(self.config.TEMP_PATH, self._file_prefix + ".test.data.x")
         self._train_y_loc = os.path.join(self.config.TEMP_PATH, self._file_prefix + ".train.data.y")
@@ -383,11 +389,24 @@ class CommonRGFExecuterBase(BaseEstimator):
         return state
 
     def __setstate__(self, state):
+        state = state.copy()
+        model = state.pop("model", None)
+        training_config = state.pop("config", None)
         self.__dict__.update(state)
-        if hasattr(self, "_model_file") and self._fitted:
-            with open(self._model_file, 'wb') as fw:
-                fw.write(self.__dict__["model"])
-            del self.__dict__["model"]
+        # Resolve executables and scratch space on the receiving machine.
+        # Unfitted executers are also sent to local joblib training workers;
+        # those must retain the explicitly configured training executable.
+        self.config = Config() if self._fitted or training_config is None else training_config
+        self._file_prefix = str(uuid4()) + str(COUNTER.increment())
+        self._set_paths()
+        if self._fitted:
+            if model is None:
+                raise ValueError("Fitted RGF pickle does not contain model bytes.")
+            os.makedirs(self.config.TEMP_PATH, exist_ok=True)
+            self._model_file = self._model_file_loc
+            with open(self._model_file, 'xb') as fw:
+                fw.write(model)
+        UUIDS.append(self._file_prefix)
 
 
 class CommonRGFEstimatorBase(BaseEstimator):
@@ -473,9 +492,13 @@ class CommonRGFEstimatorBase(BaseEstimator):
         return state
 
     def __setstate__(self, state):
-        global CONFIG
-        CONFIG = state.pop("config")
+        state = state.copy()
+        state.pop("config", None)
         self.__dict__.update(state)
+        self._set_config()
+        # Old RGF pickles predate the optional native split workers.
+        if "split_threads" in self._get_param_names():
+            self.__dict__.setdefault("split_threads", 1)
 
     def _fit_binary_task(self, X, y, sample_weight, params):
         raise NotImplementedError(NOT_IMPLEMENTED_ERROR_DESC)

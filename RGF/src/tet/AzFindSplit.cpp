@@ -34,7 +34,13 @@ void AzFindSplit::_findBestSplit(int nx,
   const int *dxs = tree->node(nx)->data_indexes(); 
   const int dxs_num = tree->node(nx)->dxs_num; 
 
-  const AzSortedFeatArr *sorted_arr = tree->sorted_array(nx, data); 
+  const int worker_count = std::min(split_threads, data->featNum());
+  const bool parallel = worker_count > 1 &&
+                        static_cast<long long>(dxs_num)*data->featNum() >= 32768;
+  if (parallel && (!feature_workers || feature_workers->size() != worker_count))
+    feature_workers.reset(new AzFeatureWorkers(worker_count));
+  const AzSortedFeatArr *sorted_arr = tree->sorted_array(
+      nx, data, parallel ? feature_workers.get() : NULL);
   if (sorted_arr == NULL) {
     throw new AzException(eyec, "No sorted array?!"); 
   }
@@ -49,23 +55,42 @@ void AzFindSplit::_findBestSplit(int nx,
   if (ia_fx != NULL) {
     fxs = ia_fx->point(&feat_num); 
   }
-  for (int ix = 0; ix < feat_num; ++ix) {
-    int fx = ix; 
-    if (fxs != NULL) fx = fxs[ix]; 
+  // Contiguous feature ranges preserve the original first-wins tie rule.
+  // Small nodes stay serial to avoid dispatch overhead; no arithmetic changes.
+  std::unique_ptr<AzTrTsplit[]> candidates;
+  if (parallel) candidates.reset(new AzTrTsplit[worker_count]);
+  const auto search = [&](int worker) {
+    AzTrTsplit *candidate = parallel ? &candidates[worker] : best_split;
+    if (parallel) candidate->copy(best_split);
+    const int begin = parallel ? static_cast<long long>(feat_num)*worker/worker_count : 0;
+    const int end = parallel ? static_cast<long long>(feat_num)*(worker+1)/worker_count : feat_num;
+    for (int ix = begin; ix < end; ++ix) {
+      int fx = ix;
+      if (fxs != NULL) fx = fxs[ix];
 
-    AzSortedFeatWork tmp; 
-    const AzSortedFeat *sorted = sorted_arr->sorted(fx); 
-    if (sorted == NULL) { /* This happens only with Thrift or warm-start */
-      const AzSortedFeat *my_sorted = sorted_arr->sorted(data->sorted_array(), fx, &tmp); 
-      if (my_sorted->dataNum() != dxs_num) {
-        throw new AzException(eyec, "conflict in #data"); 
+      AzSortedFeatWork tmp;
+      const AzSortedFeat *sorted = sorted_arr->sorted(fx);
+      if (sorted == NULL) { /* This happens only with Thrift or warm-start */
+        const AzSortedFeat *my_sorted = sorted_arr->sorted(data->sorted_array(), fx, &tmp);
+        if (my_sorted->dataNum() != dxs_num) {
+          throw new AzException(eyec, "conflict in #data");
+        }
+        loop(candidate, fx, my_sorted, dxs_num, &total);
       }
-      loop(best_split, fx, my_sorted, dxs_num, &total); 
+      else {
+        loop(candidate, fx, sorted, dxs_num, &total);
+      }
     }
-    else {
-      loop(best_split, fx, sorted, dxs_num, &total); 
-    }
+  };
+  if (parallel) {
+    if (!feature_workers || feature_workers->size() != worker_count)
+      feature_workers.reset(new AzFeatureWorkers(worker_count));
+    feature_workers->run(search);
+    for (int worker = 0; worker < worker_count; ++worker)
+      if (candidates[worker].gain > best_split->gain)
+        best_split->copy(&candidates[worker]);
   }
+  else search(0);
 
   if (best_split->fx >= 0) {
     if (!dmp_out.isNull()) {

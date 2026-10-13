@@ -1,4 +1,6 @@
-from glob import glob
+from glob import glob, escape as glob_escape
+import os
+import re
 from math import ceil
 from shutil import copyfile
 
@@ -92,6 +94,12 @@ learning_rate : float, optional (default=0.5)
     Step size of Newton updates used in coordinate descent to optimize weights.
     (Original name: opt_stepsize.)
 {%calc_prob_parameter%}{%n_jobs_parameter%}
+split_threads : int, optional (default=1)
+    Workers per native training process for feature split search. Must be positive.
+    Preserves the serial split order and RGF_Sib regularization. Requires the
+    updated native binary when greater than one. For multiclass training, total
+    workers can reach n_jobs * split_threads.
+
 memory_policy : string ("conservative" or "generous"), optional (default="generous")
     Memory using policy.
     Generous: it runs faster using more memory by keeping the sorted orders
@@ -163,7 +171,10 @@ class RGFEstimatorBase(utils.CommonRGFEstimatorBase):
                          memory_policy,
                          init_model,
                          calc_prob="sigmoid",
-                         n_jobs=-1):
+                         n_jobs=-1,
+                         split_threads=1):
+        if isinstance(split_threads, bool) or not isinstance(split_threads, utils.INTS) or split_threads < 1:
+            raise ValueError("split_threads must be a positive integer.")
         if not isinstance(max_leaf, utils.INTS):
             raise ValueError(
                 "max_leaf must be an integer, got {0}.".format(type(max_leaf)))
@@ -359,6 +370,7 @@ class RGFEstimatorBase(utils.CommonRGFEstimatorBase):
                         memory_policy=self.memory_policy,
                         verbose=self.verbose,
                         init_model=self.init_model,
+                        split_threads=self.split_threads,
                         is_classification=is_classifier(self)))
         return res
 
@@ -468,7 +480,8 @@ class RGFRegressor(RegressorMixin, utils.RGFRegressorMixin, RGFEstimatorBase):
                  learning_rate=0.5,
                  memory_policy="generous",
                  verbose=0,
-                 init_model=None):
+                 init_model=None,
+                 split_threads=1):
         if not utils.Config().RGF_AVAILABLE:
             raise Exception('RGF estimators are unavailable for usage.')
         super().__init__()
@@ -488,6 +501,7 @@ class RGFRegressor(RegressorMixin, utils.RGFRegressorMixin, RGFEstimatorBase):
         self.memory_policy = memory_policy
         self.verbose = verbose
         self.init_model = init_model
+        self.split_threads = split_threads
 
     _regressor_init_specific_values = {
         '{%estimator_type%}': 'regressor',
@@ -505,7 +519,7 @@ class RGFRegressor(RegressorMixin, utils.RGFRegressorMixin, RGFEstimatorBase):
         __doc__ = __doc__.replace(_template, _value)
 
     def save_model(self, filename):
-        super().save_model(filename)
+        return super().save_model(filename)
 
     _regressor_save_model_specific_values = {
         '{%file_singular_or_plural%}': 'file',
@@ -535,7 +549,8 @@ class RGFClassifier(ClassifierMixin, utils.RGFClassifierMixin, RGFEstimatorBase)
                  n_jobs=-1,
                  memory_policy="generous",
                  verbose=0,
-                 init_model=None):
+                 init_model=None,
+                 split_threads=1):
         if not utils.Config().RGF_AVAILABLE:
             raise Exception('RGF estimators are unavailable for usage.')
         super().__init__()
@@ -557,6 +572,7 @@ class RGFClassifier(ClassifierMixin, utils.RGFClassifierMixin, RGFEstimatorBase)
         self.memory_policy = memory_policy
         self.verbose = verbose
         self.init_model = init_model
+        self.split_threads = split_threads
 
     _classifier_init_specific_values = {
         '{%estimator_type%}': 'classifier',
@@ -593,7 +609,7 @@ n_classes_ : int
         __doc__ = __doc__.replace(_template, _value)
 
     def save_model(self, filename):
-        super().save_model(filename)
+        return super().save_model(filename)
 
     _classifier_save_model_specific_values = {
         '{%file_singular_or_plural%}': 'file(s)',
@@ -631,6 +647,8 @@ class RGFExecuter(utils.CommonRGFExecuterBase):
         params.append("train_x_fn=%s" % self._train_x_loc)
         params.append("train_y_fn=%s" % self._train_y_loc)
         params.append("algorithm=%s" % self.algorithm)
+        if getattr(self, "split_threads", 1) != 1:
+            params.append("split_threads=%s" % self.split_threads)
         params.append("loss=%s" % self.loss)
         params.append("max_leaf_forest=%s" % self.max_leaf)
         params.append("test_interval=%s" % self.test_interval)
@@ -654,11 +672,16 @@ class RGFExecuter(utils.CommonRGFExecuterBase):
         return cmd
 
     def _find_model_file(self):
-        model_files = glob(self._model_file_loc + "*")
+        pattern = re.compile(re.escape(self._model_file_loc) + r"-([0-9]+)$")
+        model_files = []
+        for path in glob(glob_escape(self._model_file_loc) + "-*"):
+            match = pattern.fullmatch(path)
+            if match and os.path.isfile(path):
+                model_files.append((int(match.group(1)), path))
         if not model_files:
             raise Exception('Model learning result is not found in {0}. '
                             'Training is abnormally finished.'.format(self.config.TEMP_PATH))
-        self._model_file = sorted(model_files, reverse=True)[0]
+        self._model_file = max(model_files)[1]
 
     def _get_test_command(self, is_sparse_test_X):
         params = []

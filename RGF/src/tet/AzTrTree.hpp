@@ -63,7 +63,7 @@ public:
 
   /*---  for faster node search  ---*/
   virtual const AzSortedFeatArr *sorted_array(int nx, 
-                             const AzDataForTrTree *data) const; 
+                             const AzDataForTrTree *data, AzFeatureWorkers *workers = NULL) const;
 
   /*---  information seeking ... ---*/
   inline int maxDepth() const {

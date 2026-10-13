@@ -10,6 +10,7 @@
 #define _AZ_SORTED_FEAT_HPP_
 
 #include "AzUtil.hpp"
+#include "AzFeatureWorkers.hpp"
 #include "AzSmat.hpp"
 #include "AzDmat.hpp"
 
@@ -235,9 +236,9 @@ protected:
 
 public: 
   AzSortedFeatArr() : arrs(NULL), arrd(NULL), f_num(0), beTight(false) {}
-  AzSortedFeatArr(const AzSortedFeatArr *inp)
+  AzSortedFeatArr(const AzSortedFeatArr *inp, AzFeatureWorkers *workers = NULL)
                     : arrs(NULL), arrd(NULL), f_num(0), beTight(false) {
-    copy_base(inp); 
+    copy_base(inp, workers);
   }
   AzSortedFeatArr(const AzSortedFeatArr *inp, const int *dxs, int dxs_num) 
                     : arrs(NULL), arrd(NULL), f_num(0), beTight(false) {
@@ -283,9 +284,9 @@ public:
              const AzSortedFeatArr *inp, 
              const int *yes_dxs, int yes_dxs_num, 
              const int *no_dxs, int no_dxs_num, 
-             AzSortedFeatArr *yes, AzSortedFeatArr *no); 
+             AzSortedFeatArr *yes, AzSortedFeatArr *no, AzFeatureWorkers *workers = NULL);
 
-  void copy_base(const AzSortedFeatArr *inp); 
+  void copy_base(const AzSortedFeatArr *inp, AzFeatureWorkers *workers = NULL);
   void filter_base(const AzSortedFeatArr *inp, const int *dxs, int dxs_num); 
 
 protected:
