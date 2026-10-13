@@ -16,7 +16,24 @@
 #include "AzTrTree.hpp"
 #include "AzFeatureWorkers.hpp"
 #include "AzSplitCache.hpp"
+#include "AzLevelCodes.hpp"
 #include <memory>
+#include <vector>
+
+/* Target sums of one level (distinct value) of one feature within a node. */
+class AzLevelBin {
+public:
+  double wy_sum, w_sum;
+  int count;
+  AzLevelBin() : wy_sum(0), w_sum(0), count(0) {}
+};
+
+/* One worker's level sums for its features, reused across nodes. */
+class AzLevelWork {
+public:
+  std::vector<AzLevelBin> bins;
+  std::vector<int> first_bin; /* per feature position */
+};
 
 //! Abstract class: provides building blocks for node split search. 
 /*------------------------------------------*/
@@ -35,6 +52,9 @@ protected:
 
   AzIntArr ia_feats;
   const AzIntArr *ia_fx;
+
+  std::vector<AzLevelWork> level_work; /* per worker */
+  std::vector<int> ascending_rows;
 
 public:
   AzFindSplit() : target(NULL), data(NULL), tree(NULL), ia_fx(NULL),
@@ -96,6 +116,25 @@ protected:
             std::vector<AzSplitCandidate> *record, /* may be NULL */
             int record_limit);
   void replayBestSplit(AzTrTsplit *best_split) const;
+  void levelSearch(AzTrTsplit *best_split,
+                   const AzLevelCodes *level_codes,
+                   const int *fxs, /* may be NULL */
+                   int begin, int end, /* positions in fxs or feature#s */
+                   const int *rows, /* ascending */
+                   int row_num,
+                   const Az_forFindSplit *total,
+                   std::vector<AzSplitCandidate> *record, /* may be NULL */
+                   int record_limit,
+                   AzLevelWork *work);
+  void levelLoop(AzTrTsplit *best_split,
+                 int fx,
+                 const AzLevelBin *bins,
+                 const double *level_value,
+                 int level_num,
+                 int total_size,
+                 const Az_forFindSplit *total,
+                 std::vector<AzSplitCandidate> *record, /* may be NULL */
+                 int record_limit);
   int splitCacheLimit() const {
     return MAX(4096, 16*data->featNum());
   }

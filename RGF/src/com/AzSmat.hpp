@@ -82,8 +82,13 @@ public:
   
   void write(AzFile *file); 
 
-  inline int rowNum() const { return row_num; }  
-  void load(const AzIntArr *ia_row, double val, bool do_ignore_negative_rowno=false); 
+  inline int rowNum() const { return row_num; }
+  /* stored elements in row order, including any stored zeros (read-only) */
+  inline const AZI_VECT_ELM *storedElements(int *num) const {
+    *num = elm_num;
+    return elm;
+  }
+  void load(const AzIntArr *ia_row, double val, bool do_ignore_negative_rowno=false);
   void load(const AzIFarr *ifa_row_val); 
   void load(AzIFarr *ifa_row_val) {
     ifa_row_val->sort_Int(true); 
@@ -262,6 +267,8 @@ public:
   void zerooutNegative(); /* not tested */
 
   void set(const AzSmat *inp); 
+  /* set(inp), freeing each column of inp once copied: one copy held at a time */
+  void set_and_release(AzSmat *inp); 
   void set(const AzSmat *inp, int col0, int col1); /* this <- inp[,col0:col1-1] */
   int set(const AzSmat *inp, const int *cols, int cnum, bool do_zero_negaindex=false); /* return #negatives in cols */
   void set(int col0, int col1, const AzSmat *inp, int icol0=0); /* this[col0:col1-1] <- inp[icol0::(col1-col0)] */

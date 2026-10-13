@@ -21,6 +21,7 @@
 #include "AzRgf_Optimizer.hpp"
 #include "AzRgf_Optimizer_Dflt.hpp"
 #include "AzRgf_FindSplit_Dflt.hpp"
+#include "AzReleaseMemory.hpp"
 #include "AzRgfTreeEnsImp.hpp"
 #include "AzRegDepth.hpp"
 #include "AzParam.hpp"
@@ -120,6 +121,7 @@ public:
     v_y->destroy(); 
     if (v_fixed_dw != NULL) v_fixed_dw->destroy(); 
     if (inp_ens != NULL) inp_ens->destroy(); 
+    AzReleaseFreedMemory(); 
   }
   virtual AzTETrainer_Ret proceed_until(); 
 

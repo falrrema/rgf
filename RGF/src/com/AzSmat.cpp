@@ -139,6 +139,21 @@ void AzSmat::set(const AzSmat *inp)
 }
 
 /*-------------------------------------------------------------*/
+void AzSmat::set_and_release(AzSmat *inp)  
+{
+  if (inp == this) return; 
+  reform(inp->row_num, inp->col_num); 
+  for (int cx = 0; cx < col_num; ++cx) {
+    if (inp->column[cx] == NULL) continue; 
+    column[cx] = new AzSvect(row_num); 
+    column[cx]->set(inp->column[cx]); 
+    delete inp->column[cx]; 
+    inp->column[cx] = NULL; 
+  }
+  inp->reset(); 
+}
+
+/*-------------------------------------------------------------*/
 void AzSmat::set(const AzSmat *inp, int col0, int col1)  
 {
   if (col0 < 0 || col1 < 0 || col1 > inp->col_num || col0 >= col1) {

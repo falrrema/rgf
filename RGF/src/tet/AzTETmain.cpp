@@ -79,11 +79,11 @@ void AzTETmain::readData(const char *x_fn,
 {
   AzSvDataS dataset; 
   dataset.read(x_fn, y_fn, fdic_fn); 
-  m_x->set(dataset.feat()); 
   v_y->set(dataset.targets()); 
   if (featInfo != NULL) {
     featInfo->reset(dataset.featInfo()); 
   }
+  dataset.moveFeatTo(m_x); /* last: the feature info reads the feature count */
 }
 
 /*------------------------------------------------------------------*/

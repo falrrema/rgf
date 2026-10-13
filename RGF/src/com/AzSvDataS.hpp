@@ -32,6 +32,12 @@ public:
     return &m_feat;
   }
 
+  /* hand the features over to m_out (as m_out->set(feat())), emptying this */
+  void moveFeatTo(AzSmat *m_out) {
+    checkIfReady("feat");
+    m_out->set_and_release(&m_feat);
+  }
+
   inline const AzDvect *targets() const {
     checkIfReady("targets");
     return &v_y;

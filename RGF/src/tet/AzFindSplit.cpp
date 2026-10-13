@@ -44,10 +44,18 @@ void AzFindSplit::_findBestSplit(int nx,
                         static_cast<long long>(dxs_num)*data->featNum() >= 32768;
   if (parallel && (!feature_workers || feature_workers->size() != worker_count))
     feature_workers.reset(new AzFeatureWorkers(worker_count));
-  const AzSortedFeatArr *sorted_arr = tree->sorted_array(
-      nx, data, parallel ? feature_workers.get() : NULL);
-  if (sorted_arr == NULL) {
-    throw new AzException(eyec, "No sorted array?!"); 
+  /*---  level codes replace the sorted lists when the data has them  ---*/
+  const AzLevelCodes *level_codes = data->levelCodes();
+  const AzSortedFeatArr *sorted_arr = NULL;
+  const int *rows = NULL;
+  if (level_codes != NULL) {
+    rows = AzLevelCodes::ascendingRows(dxs, dxs_num, &ascending_rows);
+  }
+  else {
+    sorted_arr = tree->sorted_array(nx, data, parallel ? feature_workers.get() : NULL);
+    if (sorted_arr == NULL) {
+      throw new AzException(eyec, "No sorted array?!");
+    }
   }
 
   Az_forFindSplit total; 
@@ -68,12 +76,19 @@ void AzFindSplit::_findBestSplit(int nx,
   // worker order reproduces the serial evaluation order exactly.
   const int record_limit = splitCacheLimit();
   std::vector<std::vector<AzSplitCandidate> > records(split_cache != NULL ? (parallel ? worker_count : 1) : 0);
+  if (level_codes != NULL && (int)level_work.size() < (parallel ? worker_count : 1))
+    level_work.resize(parallel ? worker_count : 1);
   const auto search = [&](int worker) {
     AzTrTsplit *candidate = parallel ? &candidates[worker] : best_split;
     if (parallel) candidate->copy(best_split);
     std::vector<AzSplitCandidate> *record = records.empty() ? NULL : &records[worker];
     const int begin = parallel ? static_cast<long long>(feat_num)*worker/worker_count : 0;
     const int end = parallel ? static_cast<long long>(feat_num)*(worker+1)/worker_count : feat_num;
+    if (level_codes != NULL) {
+      levelSearch(candidate, level_codes, fxs, begin, end, rows, dxs_num, &total,
+                  record, record_limit, &level_work[worker]);
+      return;
+    }
     for (int ix = begin; ix < end; ++ix) {
       int fx = ix;
       if (fxs != NULL) fx = fxs[ix];
@@ -213,6 +228,137 @@ void AzFindSplit::loop(AzTrTsplit *best_split,
     if (gain > best_split->gain) {
       best_split->reset_values(fx, value, gain,
                                bestP[le_idx], bestP[gt_idx]);
+    }
+  }
+}
+
+/*--------------------------------------------------------*/
+/*
+ * Level sums for features [begin, end), then loop() over each feature's
+ * levels.  Rows are visited in ascending order, so every level adds its rows'
+ * targets in the order the sorted list holds them (value, then row).
+ */
+void AzFindSplit::levelSearch(AzTrTsplit *best_split,
+                              const AzLevelCodes *level_codes,
+                              const int *fxs, /* may be NULL */
+                              int begin, int end,
+                              const int *rows, /* ascending */
+                              int row_num,
+                              const Az_forFindSplit *total,
+                              std::vector<AzSplitCandidate> *record, /* may be NULL */
+                              int record_limit,
+                              AzLevelWork *work)
+{
+  const int count = end - begin;
+  if (count <= 0) return;
+  const int *offsets = level_codes->levelOffsets();
+  work->first_bin.resize(count);
+  int bin_num = 0;
+  for (int kx = 0; kx < count; ++kx) {
+    const int fx = (fxs != NULL) ? fxs[begin+kx] : begin+kx;
+    work->first_bin[kx] = bin_num;
+    bin_num += offsets[fx+1] - offsets[fx];
+  }
+  work->bins.assign(bin_num, AzLevelBin());
+  AzLevelBin *bins = work->bins.data();
+  const int *first_bin = work->first_bin.data();
+
+  const double *tarDw = target->tarDw_arr();
+  const double *dw = target->dw_arr();
+  if (fxs == NULL) { /* contiguous features */
+    for (int ix = 0; ix < row_num; ++ix) {
+      const int dx = rows[ix];
+      const double wy = tarDw[dx], w = dw[dx];
+      const unsigned char *code = level_codes->rowCodes(dx) + begin;
+      for (int kx = 0; kx < count; ++kx) {
+        AzLevelBin &bin = bins[first_bin[kx] + code[kx]];
+        bin.wy_sum += wy;
+        bin.w_sum += w;
+        ++bin.count;
+      }
+    }
+  }
+  else {
+    const int *fx_list = fxs + begin;
+    for (int ix = 0; ix < row_num; ++ix) {
+      const int dx = rows[ix];
+      const double wy = tarDw[dx], w = dw[dx];
+      const unsigned char *code = level_codes->rowCodes(dx);
+      for (int kx = 0; kx < count; ++kx) {
+        AzLevelBin &bin = bins[first_bin[kx] + code[fx_list[kx]]];
+        bin.wy_sum += wy;
+        bin.w_sum += w;
+        ++bin.count;
+      }
+    }
+  }
+
+  for (int kx = 0; kx < count; ++kx) {
+    const int fx = (fxs != NULL) ? fxs[begin+kx] : begin+kx;
+    levelLoop(best_split, fx, bins + first_bin[kx], level_codes->levelValues(fx),
+              level_codes->levelNum(fx), row_num, total, record, record_limit);
+  }
+}
+
+/*--------------------------------------------------------*/
+/* loop() on a dense sorted list, with the node's non-empty levels as its value groups. */
+void AzFindSplit::levelLoop(AzTrTsplit *best_split,
+                            int fx,
+                            const AzLevelBin *bins,
+                            const double *level_value,
+                            int level_num,
+                            int total_size,
+                            const Az_forFindSplit *total,
+                            std::vector<AzSplitCandidate> *record, /* may be NULL */
+                            int record_limit)
+{
+  int last = level_num - 1;
+  while (last >= 0 && bins[last].count == 0) --last;
+
+  int dest_size = 0;
+  Az_forFindSplit i[2];
+  Az_forFindSplit *src = &i[1];
+  Az_forFindSplit *dest = &i[0];
+
+  int lx = 0;
+  while (lx < last && bins[lx].count == 0) ++lx;
+  while (lx < last) { /* the last group never moves: no all vs nothing */
+    int next_lx = lx + 1;
+    while (bins[next_lx].count == 0) ++next_lx;
+    const double value = (level_value[lx] + level_value[next_lx]) / 2;
+    const AzLevelBin &bin = bins[lx];
+    lx = next_lx;
+
+    dest_size += bin.count;
+    if (dest_size >= total_size) {
+      break;
+    }
+    dest->wy_sum += bin.wy_sum;
+    dest->w_sum += bin.w_sum;
+
+    if (min_size > 0) {
+      if (dest_size < min_size) {
+        continue;
+      }
+      if (total_size - dest_size < min_size) {
+        break;
+      }
+    }
+
+    src->wy_sum = total->wy_sum - dest->wy_sum;
+    src->w_sum  = total->w_sum  - dest->w_sum;
+
+    if (record != NULL && (int)record->size() <= record_limit) {
+      AzSplitCandidate c;
+      c.i[0] = i[0]; c.i[1] = i[1];
+      c.value = value; c.fx = fx; c.forward = true;
+      record->push_back(c);
+    }
+
+    double bestP[2] = {0, 0};
+    const double gain = evalSplit(i, bestP);
+    if (gain > best_split->gain) {
+      best_split->reset_values(fx, value, gain, bestP[0], bestP[1]);
     }
   }
 }

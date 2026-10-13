@@ -15,9 +15,12 @@
 #include "AzSortedFeat.hpp"
 #include "AzParam.hpp"
 #include "AzHelp.hpp"
+#include "AzLevelCodes.hpp"
 
 #define kw_dataproc  "data_management="
 #define help_dataproc "Sparse|Dense|Auto.  Data is treated either as \"Sparse\" data (having many zeroes), as \"Dense\" data, or as \"Auto\"matically determined.  It affects speed and memory consumption of training."
+#define kw_split_histogram "split_histogram="
+#define help_split_histogram "1: when dense data has at most 256 distinct values per feature, keep one byte per value and search splits on per-level sums (same model, less memory).  0: sorted lists."
 
 /*--------------------------------------------------------*/
 class AzDataForTrTree {
@@ -35,7 +38,10 @@ protected:
   /*-------------------------*/
 
   AzSvFeatInfoClone feat; 
-  AzSortedFeatArr sorted_arr;  /* not set if this is test data */
+  AzSortedFeatArr sorted_arr;  /* not set if this is test data or level codes are used */
+  AzLevelCodes level_codes;    /* replaces m_tran_dense and sorted_arr when set */
+  bool split_histogram; 
+  int level_threads; 
 
   enum dataproc_Type {
     dataproc_Auto = 0, 
@@ -49,7 +55,8 @@ protected:
   AzBytArr s_dataproc; 
 
 public:
-  AzDataForTrTree() : dataproc(dataproc_Auto), data_num(0) {}
+  AzDataForTrTree() : dataproc(dataproc_Auto), data_num(0), 
+                      split_histogram(true), level_threads(1) {}
   virtual void reset_data(const AzOut &out, 
                   const AzSmat *m_data, 
                   AzParam &p, 
@@ -85,10 +92,18 @@ public:
     m_tran_sparse.reset(); 
     m_tran_dense.unlock(); 
     m_tran_dense.reset(); 
+    sorted_arr.reset(); 
+    level_codes.reset(); 
     data_num = m_data->colNum(); 
     if (doSparse) {
       m_data->transpose(&m_tran_sparse); 
       sorted_arr.reset_sparse(&m_tran_sparse, beTight); 
+    }
+    else if (split_histogram && level_codes.build(m_data, level_threads)) {
+      AzBytArr s_lv("Split search on one-byte level codes: at most "); 
+      s_lv.cn(level_codes.maxLevelNum()); 
+      s_lv.c(" levels per feature; code GB=", level_codes.codeBytes()/(1024.0*1024.0*1024.0), 3); 
+      AzPrint::writeln(out, s_lv); 
     }
     else {
       m_tran_dense.transpose_from(m_data); 
@@ -125,6 +140,7 @@ public:
     data_num = m_data->colNum(); 
     m_tran_dense.reset(); 
     m_tran_sparse.reset(); 
+    level_codes.reset(); 
     if (doSparse) {    
       m_data->transpose(&m_tran_sparse); 
     }
@@ -147,7 +163,10 @@ public:
               double border_val) const
   {
     double value; 
-    if (AzSmat::isNull(&m_tran_sparse)) {
+    if (level_codes.isActive()) {
+      value = level_codes.value(dx, fx); 
+    }
+    else if (AzSmat::isNull(&m_tran_sparse)) {
       value = m_tran_dense.get(dx, fx); 
     }
     else {
@@ -161,6 +180,11 @@ public:
     return &feat; 
   }
 
+  /*---  level codes (NULL when the sorted lists are used)  ---*/
+  inline const AzLevelCodes *levelCodes() const {
+    return level_codes.isActive() ? &level_codes : NULL; 
+  }
+
   virtual inline const AzSortedFeatArr *sorted_array() const {
     return &sorted_arr; 
   }
@@ -172,6 +196,7 @@ public:
   virtual void printHelp(AzHelp &h) const {
     h.begin("", "AzDataForTrTree", "Data processing"); 
     h.item(kw_dataproc, help_dataproc, "Auto"); 
+    h.item(kw_split_histogram, help_split_histogram, "1"); 
   }
 
 protected: 
@@ -187,13 +212,23 @@ protected:
       throw new AzException(AzInputNotValid, kw_dataproc, 
             "must be either \"Auto\", \"Sparse\", or \"Dense\"."); 
     }
+    int split_histogram_switch = 1; 
+    p.vInt(kw_split_histogram, &split_histogram_switch); 
+    if (split_histogram_switch != 0 && split_histogram_switch != 1) {
+      throw new AzException(AzInputNotValid, kw_split_histogram, "must be 0 or 1"); 
+    }
+    split_histogram = (split_histogram_switch == 1); 
+    level_threads = 1; 
+    p.vInt("split_threads=", &level_threads); 
+    level_threads = MAX(1, level_threads); 
   }
   virtual void printParam(const AzOut &out) const {
     if (out.isNull()) return; 
     AzPrint o(out); 
-    if (s_dataproc.length() > 0) {
+    if (s_dataproc.length() > 0 || !split_histogram) {
       o.ppBegin("AzDataForTrTree", "Data processing"); 
-      o.printV(kw_dataproc, s_dataproc); 
+      if (s_dataproc.length() > 0) o.printV(kw_dataproc, s_dataproc); 
+      if (!split_histogram) o.printV(kw_split_histogram, 0); 
       o.ppEnd(); 
     }
   }

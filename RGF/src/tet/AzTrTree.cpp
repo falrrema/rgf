@@ -186,26 +186,33 @@ void AzTrTree::_splitNode(const AzDataForTrTree *data,
   nodes[nx].gain = inp->gain;
 
   AzIntArr ia_le, ia_gt; 
-  const AzSortedFeatArr *s_arr = sorted_arr[nx]; 
-  if (s_arr == NULL) {
-    if (nx == root_nx) {
-      s_arr = data->sorted_array(); 
-    }
-    else {
-      throw new AzException("AzTrTree::_splitNode", "sorted_arr[nx]=null"); 
-    }
-  }
-  const AzSortedFeat *sorted = s_arr->sorted(inp->fx); 
-  if (sorted == NULL) {
-    AzSortedFeatWork tmp; 
-    const AzSortedFeat *my_sorted = sorted_arr[nx]->sorted(data->sorted_array(), 
-                                    inp->fx, &tmp); 
-    my_sorted->getIndexes(nodes[nx].dxs, nodes[nx].dxs_num, inp->border_val, 
-                          &ia_le, &ia_gt); 
+  const AzLevelCodes *level_codes = data->levelCodes(); 
+  if (level_codes != NULL) {
+    level_codes->partition(nodes[nx].dxs, nodes[nx].dxs_num, inp->fx, inp->border_val, 
+                           &ia_le, &ia_gt); 
   }
   else {
-    sorted->getIndexes(nodes[nx].dxs, nodes[nx].dxs_num, inp->border_val, 
-                       &ia_le, &ia_gt); 
+    const AzSortedFeatArr *s_arr = sorted_arr[nx]; 
+    if (s_arr == NULL) {
+      if (nx == root_nx) {
+        s_arr = data->sorted_array(); 
+      }
+      else {
+        throw new AzException("AzTrTree::_splitNode", "sorted_arr[nx]=null"); 
+      }
+    }
+    const AzSortedFeat *sorted = s_arr->sorted(inp->fx); 
+    if (sorted == NULL) {
+      AzSortedFeatWork tmp; 
+      const AzSortedFeat *my_sorted = sorted_arr[nx]->sorted(data->sorted_array(), 
+                                      inp->fx, &tmp); 
+      my_sorted->getIndexes(nodes[nx].dxs, nodes[nx].dxs_num, inp->border_val, 
+                            &ia_le, &ia_gt); 
+    }
+    else {
+      sorted->getIndexes(nodes[nx].dxs, nodes[nx].dxs_num, inp->border_val, 
+                         &ia_le, &ia_gt); 
+    }
   }
 
   int le_offset = nodes[nx].dxs_offset; 
@@ -533,7 +540,7 @@ void AzTrTree::warmup(const AzTreeNodes *inp,
       throw new AzException(eyec, "something is wrong with split order"); 
     }
 
-    sorted_array(split_nx, data); 
+    if (data->levelCodes() == NULL) sorted_array(split_nx, data); 
 
     const AzTreeNode *inp_np = inp->node(split_nx); 
     AzTrTsplit split(inp_np->fx, inp_np->border_val, inp_np->gain,
