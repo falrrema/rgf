@@ -7,6 +7,11 @@
 
 # Regularized Greedy Forest
 
+This fork makes the original algorithms, including `RGF_Sib`, train faster and in less
+memory with exactly the same models: parallel split search, a split-sum cache and exact
+one-byte level codes. It also fixes pickle relocation and numeric checkpoint selection.
+See [usage, measured training speed and verification](RGF/parallel-training.rst).
+
 Regularized Greedy Forest (RGF) is a tree ensemble machine learning method described in [this paper](https://arxiv.org/abs/1109.0887).
 RGF can deliver better results than gradient boosted decision trees (GBDT) on a number of datasets and it has been used to win a few Kaggle competitions.
 Unlike the traditional boosted decision tree approach, RGF works directly with the underlying forest structure.
